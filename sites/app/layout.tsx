@@ -1,0 +1,1 @@
+export const metadata={title:"Promedics — Hospital administration",description:"Private patient records and visit histories"}; export default function Layout({children}:{children:React.ReactNode}){return <html lang="en"><body>{children}</body></html>}
