@@ -11,3 +11,7 @@ Checks: `node --check public/app.js`, `node scripts/test-patients.mjs`, and the 
 Use fictional records during evaluation. This initial release is not certified for clinical deployment. Hospital-specific staff roles, backup/restore procedures, retention policies, audit review, and operational approval still need to be established before real patient data is entered. The current directory returns up to 500 matching records; refine the search for larger datasets. There is no deletion UI or attachment upload.
 
 Schema migrations live in `drizzle/`. Generate new migrations after schema changes; never modify applied migrations. Publish through the Sites workflow with the existing project ID in `.openai/hosting.json`.
+
+## Administrator login
+
+The landing page has an Admin login button and a username/password form. Runtime credentials are configured as secret Sites environment values `PROMEDICS_ADMIN_USERNAME` and `PROMEDICS_ADMIN_PASSWORD`; they are not in the client or repository. Successful login issues an eight-hour opaque session cookie with HttpOnly, Secure and SameSite=Strict flags. Only its SHA-256 hash is stored in D1. Logout deletes the server session. Five failed attempts per signed-in account in fifteen minutes are rate limited. Existing ChatGPT identity and owner-private hosting are retained. The hosting sign-in page and owner Edit site control belong to the platform and cannot be removed by editing this application.

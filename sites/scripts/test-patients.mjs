@@ -8,8 +8,12 @@ const DB={prepare(query){let args=[];const s={bind(...a){args=a;return s},async 
 let user={userId:'admin-one',displayName:'Test Admin'};
 let source=readFileSync('app/api/[...path]/route.ts','utf8').replace(/import .*?;\n/g,'').replace('export const dynamic="force-dynamic";','').replace('export const GET=handle;export const POST=handle;export const PUT=handle;','');
 const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
-const handle=new Function('env','getChatGPTUser',compiled+';return handle;')({DB},async()=>user);
-async function call(path,method='GET',body,origin='https://hospital.test'){return handle(new Request('https://hospital.test/api/'+path,{method,headers:{Origin:origin,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),{params:Promise.resolve({path:path.split('?')[0].split('/')})})}
+const handle=new Function('env','getChatGPTUser',compiled+';return handle;')({DB,PROMEDICS_ADMIN_USERNAME:"test-admin",PROMEDICS_ADMIN_PASSWORD:"test-password"},async()=>user);
+let cookie='';
+async function call(path,method='GET',body,origin='https://hospital.test'){return handle(new Request('https://hospital.test/api/'+path,{method,headers:{Origin:origin,'Content-Type':'application/json',Cookie:cookie},...(body?{body:JSON.stringify(body)}:{})}),{params:Promise.resolve({path:path.split('?')[0].split('/')})})}
+assert.equal((await call('patients')).status,401);
+assert.equal((await call('login','POST',{username:'bad',password:'bad'})).status,401);
+const login=await call('login','POST',{username:'test-admin',password:'test-password'});assert.equal(login.status,200);cookie=login.headers.get('Set-Cookie').split(';')[0];assert.match(login.headers.get('Set-Cookie'),/HttpOnly; Secure; SameSite=Strict/);
 const p={name:'Fictional Patient',dob:'1995-01-01',allergies:'Penicillin',eye_colour:'Brown',tribe:'Optional',medical_aid:'Demo Fund',medical_aid_number:'TEST-123'};
 let r=await call('patients','POST',p);assert.equal(r.status,201);const {id}=await r.json();
 r=await call('patients/'+id);let data=await r.json();assert.match(data.patient.code,/^[A-Z0-9]{7}$/);assert.match(data.patient.code,/[A-Z]/);assert.match(data.patient.code,/[0-9]/);const code=data.patient.code;assert.equal(data.patient.medical_aid_number,'TEST-123');
@@ -20,7 +24,8 @@ data=await (await call('patients/'+id)).json();assert.equal(data.patient.code,co
 assert.equal((await call('patients','POST',{...p,dob:'2025-02-30'})).status,400);
 assert.equal((await call('patients/'+id+'/visits','POST',{date:'1990-01-01',reason:'Invalid',medicine:'None'})).status,400);
 assert.equal((await call('patients','POST',p,'https://other.test')).status,403);
-user={userId:'different-admin',displayName:'Other'};assert.equal((await call('patients/'+id)).status,404);assert.equal((await (await call('patients')).json()).patients.length,0);
+user={userId:'different-admin',displayName:'Other'};assert.equal((await call('patients/'+id)).status,401);
+user={userId:'admin-one',displayName:'Test Admin'};assert.equal((await call('logout','POST',{})).status,200);assert.equal((await call('patients')).status,401);
 user=null;assert.equal((await call('patients')).status,401);
-assert.equal(sql.prepare('SELECT count(*) n FROM audit').get().n,3);
+assert.equal(sql.prepare('SELECT count(*) n FROM audit WHERE action != \'failed admin login\'').get().n,3);
 console.log('PASS: registration, seven-character codes, extended profiles, search, visits, stable codes, date validation, origin checks, account isolation, authentication and audit trail.');

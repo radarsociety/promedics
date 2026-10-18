@@ -12,7 +12,8 @@ async function handle(req:Request,{params}:any){
  const user=await getChatGPTUser();if(!user)return json({error:"Sign in to access patient records."},401);
  const path=(await params).path||[], db=env.DB;
  if(req.method!=="GET"){const origin=req.headers.get("Origin");if(!origin||origin!==new URL(req.url).origin)return json({error:"Request origin not allowed"},403);if(!req.headers.get("content-type")?.includes("application/json"))return json({error:"JSON required"},415);}
- if(path[0]==="me")return json({username:user.displayName,csrf:""});
+ const auth=await adminAccess(req,path,user.userId,db);if(auth)return auth;
+ if(path[0]==="me")return json({username:"Administrator",csrf:""});
  if(path[0]!=="patients")return json({error:"Not found"},404);
  try{
  if(path.length===1&&req.method==="GET"){
@@ -37,3 +38,30 @@ async function handle(req:Request,{params}:any){
 }
 export const GET=handle;export const POST=handle;export const PUT=handle;
 
+
+const sessionCookie="__Host-promedics-admin";
+async function digest(value:string){return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,"0")).join("");}
+async function adminAccess(req:Request,path:string[],owner:string,db:any){
+ const token=(req.headers.get("Cookie")||"").split(";").map(s=>s.trim()).find(s=>s.startsWith(sessionCookie+"="))?.slice(sessionCookie.length+1)||"";
+ const hash=await digest(token);
+ const cookie=(value:string,age:number)=>sessionCookie+"="+value+"; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age="+age;
+ const reply=(data:any,status:number,value:string,age:number)=>new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json","Cache-Control":"no-store","Set-Cookie":cookie(value,age)}});
+ if(path[0]==="logout"&&req.method==="POST"){await db.prepare("DELETE FROM admin_sessions WHERE token_hash=? AND owner=?").bind(hash,owner).run();return reply({ok:true},200,"",0);}
+ if(path[0]==="login"&&req.method==="POST"){
+  const failed=await db.prepare("SELECT count(*) n FROM audit WHERE actor=? AND action='failed admin login' AND at>?").bind(owner,new Date(Date.now()-15*60*1000).toISOString()).first();
+  if(failed.n>=5)return json({error:"Too many login attempts. Please try again in 15 minutes."},429);
+  let b;try{if(Number(req.headers.get("Content-Length")||0)>4096)return json({error:"Invalid login request"},400);b=await req.json();}catch{return json({error:"Invalid login request"},400);}
+  const config=env as unknown as Record<string,any>;
+  if(!config.PROMEDICS_ADMIN_USERNAME||!config.PROMEDICS_ADMIN_PASSWORD)return json({error:"Admin login is unavailable."},503);
+  const expected=await digest(config.PROMEDICS_ADMIN_USERNAME+"\0"+config.PROMEDICS_ADMIN_PASSWORD);
+  const actual=await digest(String(b.username||"").slice(0,100)+"\0"+String(b.password||"").slice(0,200));
+  let diff=0;for(let i=0;i<expected.length;i++)diff|=expected.charCodeAt(i)^actual.charCodeAt(i);
+  if(diff){await db.prepare("INSERT INTO audit(actor,action,record_id,at) VALUES(?,'failed admin login',0,?)").bind(owner,new Date().toISOString()).run();return json({error:"Incorrect username or password."},401);}
+  const fresh=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,"0")).join("");
+  await db.batch([db.prepare("DELETE FROM admin_sessions WHERE expires<? OR (owner=? AND token_hash=?)").bind(Date.now(),owner,hash),db.prepare("INSERT INTO admin_sessions(token_hash,owner,expires) VALUES(?,?,?)").bind(await digest(fresh),owner,Date.now()+8*60*60*1000)]);
+  return reply({username:"Administrator",csrf:""},200,fresh,8*60*60);
+ }
+ const session=token?await db.prepare("SELECT owner FROM admin_sessions WHERE token_hash=? AND owner=? AND expires>?").bind(hash,owner,Date.now()).first():null;
+ if(!session)return json({error:"Please log in as an administrator."},401);
+ return null;
+}

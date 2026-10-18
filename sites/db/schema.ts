@@ -2,3 +2,5 @@ import {integer,sqliteTable,text} from "drizzle-orm/sqlite-core";
 export const patients=sqliteTable("patients",{id:integer("id").primaryKey({autoIncrement:true}),owner:text("owner").notNull(),code:text("code").notNull().unique(),name:text("name").notNull(),dob:text("dob").notNull(),data:text("data").notNull(),created:text("created").notNull()});
 export const visits=sqliteTable("visits",{id:integer("id").primaryKey({autoIncrement:true}),patient_id:integer("patient_id").notNull().references(()=>patients.id),date:text("date").notNull(),reason:text("reason").notNull(),medicine:text("medicine").notNull(),notes:text("notes").notNull()});
 export const audit=sqliteTable("audit",{id:integer("id").primaryKey({autoIncrement:true}),actor:text("actor").notNull(),action:text("action").notNull(),record_id:integer("record_id").notNull(),at:text("at").notNull()});
+
+export const adminSessions=sqliteTable("admin_sessions",{token_hash:text("token_hash").primaryKey(),owner:text("owner").notNull(),expires:integer("expires").notNull()});
