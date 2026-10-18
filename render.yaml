@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: promedics
+    runtime: docker
+    plan: starter
+    healthCheckPath: /
+    envVars:
+      - key: PROMEDICS_SECURE_COOKIE
+        value: "1"
+      - key: PROMEDICS_DB
+        value: /data/promedics.sqlite3
+      - key: PROMEDICS_ADMIN_USERNAME
+        value: admin
+      - key: PROMEDICS_ADMIN_PASSWORD
+        generateValue: true
+    disk:
+      name: patient-database
+      mountPath: /data
+      sizeGB: 1
