@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const sql=new DatabaseSync(':memory:');
 for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')))sql.exec(readFileSync('drizzle/'+f,'utf8'));
 const DB={prepare(query){let args=[];const s={bind(...a){args=a;return s},async first(){return sql.prepare(query).get(...args)||null},async all(){return {results:sql.prepare(query).all(...args)}},run(){const r=sql.prepare(query).run(...args);return {meta:{last_row_id:Number(r.lastInsertRowid)}}}};return s},async batch(statements){sql.exec('BEGIN');try{const r=statements.map(s=>s.run());sql.exec('COMMIT');return r}catch(e){sql.exec('ROLLBACK');throw e}}};
-let user={userId:'admin-one',displayName:'Test Admin'};
+let user=null;
 let source=readFileSync('app/api/[...path]/route.ts','utf8').replace(/import .*?;\n/g,'').replace('export const dynamic="force-dynamic";','').replace('export const GET=handle;export const POST=handle;export const PUT=handle;','');
 const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
 const handle=new Function('env','getChatGPTUser',compiled+';return handle;')({DB,PROMEDICS_ADMIN_USERNAME:"test-admin",PROMEDICS_ADMIN_PASSWORD:"test-password"},async()=>user);
@@ -24,8 +24,18 @@ data=await (await call('patients/'+id)).json();assert.equal(data.patient.code,co
 assert.equal((await call('patients','POST',{...p,dob:'2025-02-30'})).status,400);
 assert.equal((await call('patients/'+id+'/visits','POST',{date:'1990-01-01',reason:'Invalid',medicine:'None'})).status,400);
 assert.equal((await call('patients','POST',p,'https://other.test')).status,403);
-user={userId:'different-admin',displayName:'Other'};assert.equal((await call('patients/'+id)).status,401);
+user={userId:'different-admin',displayName:'Other'};assert.equal((await call('patients/'+id)).status,200);
 user={userId:'admin-one',displayName:'Test Admin'};assert.equal((await call('logout','POST',{})).status,200);assert.equal((await call('patients')).status,401);
 user=null;assert.equal((await call('patients')).status,401);
 assert.equal(sql.prepare('SELECT count(*) n FROM audit WHERE action != \'failed admin login\'').get().n,3);
-console.log('PASS: registration, seven-character codes, extended profiles, search, visits, stable codes, date validation, origin checks, account isolation, authentication and audit trail.');
+const saved=sql.prepare('SELECT * FROM patients WHERE id=?').get(id);
+assert.equal(saved.code,code);
+// Preserve records created with the previous ChatGPT-scoped namespace as well.
+sql.prepare("UPDATE patients SET owner=? WHERE id=?").run("original-hospital-owner",id);
+// Simulate a fresh application module after deployment, reusing the same database.
+const restarted=new Function('env','getChatGPTUser',compiled+';return handle;')({DB,PROMEDICS_ADMIN_USERNAME:'test-admin',PROMEDICS_ADMIN_PASSWORD:'test-password'},async()=>null);
+const again=await restarted(new Request('https://hospital.test/api/login',{method:'POST',headers:{Origin:'https://hospital.test','Content-Type':'application/json'},body:JSON.stringify({username:'test-admin',password:'test-password'})}),{params:Promise.resolve({path:['login']})});assert.equal(again.status,200);cookie=again.headers.get('Set-Cookie').split(';')[0];
+const persisted=await restarted(new Request('https://hospital.test/api/patients/'+id,{headers:{Cookie:cookie}}),{params:Promise.resolve({path:['patients',String(id)]})});assert.equal(persisted.status,200);const record=await persisted.json();assert.equal(record.patient.code,code);assert.equal(record.visits.length,1);
+const stolen=cookie;cookie='__Host-promedics-admin=forged';assert.equal((await call('patients')).status,401);cookie=stolen;
+for(let i=0;i<4;i++)assert.equal((await call('login','POST',{username:'bad',password:'bad'})).status,401);assert.equal((await call('login','POST',{username:'bad',password:'bad'})).status,429);
+console.log('PASS: registration, seven-character codes, extended profiles, search, visits, stable codes, date validation, origin checks, admin session enforcement, authentication and audit trail.');
